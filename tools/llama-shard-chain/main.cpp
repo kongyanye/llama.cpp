@@ -127,8 +127,7 @@ int main(int argc, char ** argv) {
     if (llama_decode(ctx, batch) != 0) {
         LOG_ERR("Error: failed to decode prompt\n");
         llama_batch_free(batch);
-        llama_free(ctx);
-        llama_model_free(model);
+        // ctx and model are automatically freed by smart pointers in llama_init when it goes out of scope
         return 1;
     }
     llama_batch_free(batch);
@@ -192,8 +191,7 @@ int main(int argc, char ** argv) {
 
     // Cleanup
     common_sampler_free(smpl);
-    llama_free(ctx);
-    llama_model_free(model);
+    // ctx and model are automatically freed by smart pointers in llama_init
     llama_backend_free();
 
     return 0;
