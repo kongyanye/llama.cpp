@@ -652,6 +652,14 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     }
                 }
             } break;
+        case LLM_ARCH_LLAMA_SHARD:
+            {
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+
+                // For shards, we don't need to determine model type based on layers
+                // since shards contain a subset of layers from the original model
+                type = LLM_TYPE_UNKNOWN;
+            } break;
         case LLM_ARCH_LLAMA4:
             {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
@@ -2489,19 +2497,24 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         const auto tn = LLM_TN(arch);
         switch (arch) {
             case LLM_ARCH_LLAMA:
+            case LLM_ARCH_LLAMA_SHARD:
             case LLM_ARCH_REFACT:
             case LLM_ARCH_MINICPM:
             case LLM_ARCH_GRANITE:
             case LLM_ARCH_GRANITE_MOE:
                 {
-                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
+                    // For llama-shard, token embedding is optional (only first shard has it)
+                    int tok_embd_flags = (arch == LLM_ARCH_LLAMA_SHARD) ? TENSOR_NOT_REQUIRED : 0;
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, tok_embd_flags);
 
                     // output
-                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
+                    // For llama-shard, output tensors are optional (only final shard has them)
+                    int output_norm_flags = (arch == LLM_ARCH_LLAMA_SHARD) ? TENSOR_NOT_REQUIRED : 0;
+                    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, output_norm_flags);
                     output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
 
                     // if output is NULL, init from the input tok embed
-                    if (output == NULL) {
+                    if (output == NULL && arch != LLM_ARCH_LLAMA_SHARD) {
                         output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
                     }
 
@@ -6897,6 +6910,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
             {
                 llm = std::make_unique<llm_build_llama>(*this, params);
             } break;
+        case LLM_ARCH_LLAMA_SHARD:
+            {
+                llm = std::make_unique<llm_build_llama_shard>(*this, params);
+            } break;
         case LLM_ARCH_LLAMA4:
             {
                 if (hparams.swa_type == LLAMA_SWA_TYPE_NONE) {
@@ -7445,6 +7462,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
 
         // use what we call a normal RoPE, operating on pairs of consecutive head values
         case LLM_ARCH_LLAMA:
+        case LLM_ARCH_LLAMA_SHARD:
         case LLM_ARCH_LLADA:
         case LLM_ARCH_LLAMA4:
         case LLM_ARCH_DECI:

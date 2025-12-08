@@ -86,6 +86,7 @@ add_library(llama
             models/llada.cpp
             models/llama-iswa.cpp
             models/llama.cpp
+            models/llama-shard.cpp
             models/mamba.cpp
             models/minicpm3.cpp
             models/minimax-m2.cpp
