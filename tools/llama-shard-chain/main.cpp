@@ -20,6 +20,13 @@ static void print_usage(int, char ** argv) {
 }
 
 int main(int argc, char ** argv) {
+    // Set log level to error (only error messages will be shown)
+    llama_log_set([](ggml_log_level level, const char * text, void * /* user_data */) {
+        if (level >= GGML_LOG_LEVEL_ERROR) {
+            fprintf(stderr, "%s", text);
+        }
+    }, nullptr);
+
     common_params params;
 
     if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_MAIN, print_usage)) {
