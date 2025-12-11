@@ -2510,13 +2510,20 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     // output
                     // For llama-shard, output tensors are optional (only final shard has them)
                     int output_norm_flags = (arch == LLM_ARCH_LLAMA_SHARD) ? TENSOR_NOT_REQUIRED : 0;
+
+
                     output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, output_norm_flags);
                     output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
 
-                    // if output is NULL, init from the input tok embed
-                    if (output == NULL && arch != LLM_ARCH_LLAMA_SHARD) {
+                    // if output is NULL, init from the input tok embed。先改掉
+                    // if (output == NULL && arch != LLM_ARCH_LLAMA_SHARD) {
+                    //     output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
+                    // }
+                    if (output == NULL && arch != LLM_ARCH_LLAMA_SHARD && tok_embd != NULL) {
                         output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
                     }
+                    
+                    
 
                     for (int i = 0; i < n_layer; ++i) {
                         auto & layer = layers[i];

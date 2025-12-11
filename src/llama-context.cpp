@@ -12,6 +12,9 @@
 #include <limits>
 #include <stdexcept>
 
+#include <cstdio> // 为了使用 FILE, fopen, fread, fwrite
+#include <thread> // 为了使用 std::this_thread::sleep_for
+#include <chrono> // 为了使用 std::chrono
 //
 // llama_context
 //
@@ -1348,6 +1351,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
     logits = has_logits ? output_base               : nullptr;
     embd   = has_embd   ? output_base + logits_size : nullptr;
+    hidden_state_tensor = nullptr;  // Initialize hidden state tensor pointer
 
     // set all ids as invalid (negative)
     std::fill(output_ids.begin(), output_ids.end(), -1);
@@ -1482,11 +1486,26 @@ ggml_status llama_context::graph_compute(
     }
 
     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
-    if (status != GGML_STATUS_SUCCESS) {
-        LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
-    }
 
-    // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));
+    // 2. [新增] Sender 安全出口
+    // 检查图中是否存在 "hidden_state" 节点，如果存在，说明是中间分片，不需要提取 Logits
+    struct ggml_tensor * hidden = ggml_graph_get_tensor(gf, "hidden_state");
+    if (hidden != nullptr) {
+        // 存储hidden_state tensor指针以供后续访问
+        hidden_state_tensor = hidden;
+        // 此时数据已在 rpc_out->data (CPU) 或显存 (GPU) 中
+        // Rust 将通过指针读取此数据
+        // 直接返回成功状态，跳过后续的 Logits 处理逻辑
+        return status;
+    } else {
+        // 清除hidden_state tensor指针
+        hidden_state_tensor = nullptr;
+    }
+    // if (status != GGML_STATUS_SUCCESS) {
+    //     LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
+    // }
+
+    // // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));
 
     return status;
 }
@@ -2497,6 +2516,33 @@ float * llama_get_embeddings_seq(llama_context * ctx, llama_seq_id seq_id) {
     ctx->synchronize();
 
     return ctx->get_embeddings_seq(seq_id);
+}
+
+float * llama_context::get_hidden_state_data() const {
+    if (hidden_state_tensor == nullptr) {
+        return nullptr;
+    }
+
+    // Get the tensor data - this handles both CPU and GPU memory
+    float * data = nullptr;
+    if (hidden_state_tensor->buffer != nullptr) {
+        // Tensor is in GPU buffer, allocate temporary buffer and copy data
+        size_t tensor_size = ggml_nbytes(hidden_state_tensor);
+        static std::vector<float> temp_buffer;
+        temp_buffer.resize(tensor_size / sizeof(float));
+        ggml_backend_tensor_get(hidden_state_tensor, temp_buffer.data(), 0, tensor_size);
+        data = temp_buffer.data();
+    } else {
+        // Tensor is in CPU memory
+        data = (float*)hidden_state_tensor->data;
+    }
+
+    return data;
+}
+
+float * llama_get_hidden_state(struct llama_context * ctx) {
+    ctx->synchronize();
+    return ctx->get_hidden_state_data();
 }
 
 // llama adapter API

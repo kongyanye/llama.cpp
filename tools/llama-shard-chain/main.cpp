@@ -38,8 +38,8 @@ int main(int argc, char ** argv) {
     if (params.n_ctx == 4096) params.n_ctx = 2048;
     if (params.n_batch == 2048) params.n_batch = 512;
 
-    // Force chat completion mode (like llama-cli default behavior)
-    params.conversation_mode = COMMON_CONVERSATION_MODE_ENABLED;
+    // Use auto mode like llama-cli for consistent behavior
+    // params.conversation_mode = COMMON_CONVERSATION_MODE_ENABLED;
 
     LOG_INF("llama_shard_chain: chat completion inference\n");
     LOG_INF("Model: %s\n", params.model.path.c_str());
@@ -116,7 +116,7 @@ int main(int argc, char ** argv) {
 
     // Tokenize prompt
     LOG_INF("Tokenizing prompt...\n");
-    std::vector<llama_token> input_tokens = common_tokenize(ctx, formatted_prompt, true);
+    std::vector<llama_token> input_tokens = common_tokenize(ctx, formatted_prompt, true, true);
     LOG_INF("Prompt tokenized to %zu tokens\n", input_tokens.size());
 
     // Process prompt tokens

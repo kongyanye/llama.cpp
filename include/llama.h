@@ -950,6 +950,13 @@ extern "C" {
     // otherwise: float[n_embd] (1-dimensional)
     LLAMA_API float * llama_get_embeddings_seq(struct llama_context * ctx, llama_seq_id seq_id);
 
+    // Get the hidden state tensor from intermediate model shards
+    // For sharded models that don't have final output layers, this returns the intermediate hidden state
+    // The tensor is tagged as "hidden_state" by the llama-shard model builder
+    // Returns pointer to tensor data or NULL if no hidden state is available
+    // Tensor dimensions: [sequence_length, hidden_size]
+    LLAMA_API float * llama_get_hidden_state(struct llama_context * ctx);
+
     //
     // Vocab
     //

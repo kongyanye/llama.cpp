@@ -208,6 +208,9 @@ public:
     // reserve a graph with a dummy ubatch of the specified size
     ggml_cgraph * graph_reserve(uint32_t n_tokens, uint32_t n_seqs, uint32_t n_outputs, const llama_memory_context_i * mctx, bool split_only = false);
 
+    // Get the hidden state tensor from the last computed graph (for sharded models)
+    float * get_hidden_state_data() const;
+
 private:
     llm_graph_params graph_params(
                         llm_graph_result * res,
@@ -287,6 +290,9 @@ private:
 
     llm_graph_result_ptr gf_res_prev;
     llm_graph_result_ptr gf_res_reserve;
+
+    // Hidden state tensor for sharded models (set during graph_compute)
+    ggml_tensor * hidden_state_tensor;
 
     // host buffer for the model output (logits and embeddings)
     ggml_backend_buffer_ptr buf_output;

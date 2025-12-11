@@ -13,7 +13,20 @@ llm_build_llama_shard::llm_build_llama_shard(const llama_model & model, const ll
     ggml_tensor * inpL;
 
     // Input embedding
-    inpL = build_inp_embd(model.tok_embd);
+    // inpL = build_inp_embd(model.tok_embd);
+    // === 替换为 ===先改了
+    if (model.tok_embd == nullptr) {
+        // Shard 1 (Receiver): 没有 Embedding，创建一个输入占位符
+        // 注意：这里需要创建一个 tensor，后续我们会用 fread 填充它
+        inpL = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, n_tokens);
+        ggml_set_name(inpL, "rpc_input_tensor"); // 名字要和后面 context.cpp 里读取的一致
+        ggml_set_input(inpL);
+    } else {
+        // Shard 0 (Sender): 正常计算 Embedding
+        inpL = build_inp_embd(model.tok_embd);
+    }
+
+
     cb(inpL, "inp_embd", -1);
 
     // Position encoding
