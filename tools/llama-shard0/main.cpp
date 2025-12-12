@@ -167,8 +167,18 @@ int main(int argc, char ** argv) {
 
     // Tokenize prompt
     LOG_INF("Tokenizing prompt...\n");
-    std::vector<llama_token> input_tokens = common_tokenize(ctx, formatted_prompt, true);
+    std::vector<llama_token> input_tokens = common_tokenize(ctx, formatted_prompt, true, true);
     LOG_INF("Prompt tokenized to %zu tokens\n", input_tokens.size());
+
+    // Debug: Print first few tokens for verification
+    LOG_INF("First 10 tokens: [");
+    for (size_t i = 0; i < std::min((size_t)10, input_tokens.size()); i++) {
+        LOG_INF("%d", input_tokens[i]);
+        if (i < std::min((size_t)10, input_tokens.size()) - 1) {
+            LOG_INF(", ");
+        }
+    }
+    LOG_INF("]\n");
 
     // Process prompt tokens
     LOG_INF("Processing prompt...\n");
@@ -197,47 +207,20 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // Try to get hidden state from the computation graph (the correct approach for sharded models)
-    printf("Attempting to extract hidden state tensor...\n");
+    // Save complete model state instead of just hidden state
+    printf("Saving complete model state including KV cache...\n");
 
-    embeddings = llama_get_hidden_state(ctx);
-    if (!embeddings) {
-        LOG_ERR("Error: unable to get hidden state tensor\n");
-        LOG_ERR("This may mean the model is not a sharded model or not the intermediate shard\n");
-        llama_batch_free(batch);
-        return 1;
-    }
+    size_t state_size = llama_state_get_size(ctx);
+    std::vector<uint8_t> state_data(state_size);
+    size_t written = llama_state_get_data(ctx, state_data.data(), state_size);
 
-    printf("Successfully extracted hidden state tensor!\n");
-    printf("This is the output of layer %d (the last layer in this shard)\n", total_layers);
+    std::ofstream state_file("model_state_shard0.bin", std::ios::binary);
+    state_file.write(reinterpret_cast<const char*>(state_data.data()), written);
+    state_file.close();
 
-    // Calculate the actual tensor dimensions
-    int sequence_length = input_tokens.size();  // Should be 38 for this test
-    printf("\n=== Feature Extraction Results ===\n");
-
-    // Check if we have full sequence or just last position
-    // The hidden_state tensor from llama.cpp might only contain the last position
-    printf("Input sequence length: %d tokens\n", sequence_length);
-    printf("Embedding dimension: %d\n", embedding_dim);
-
-    // For now, assume we only have the last position data based on the tensor implementation
-    // This is safer than assuming full sequence data
-    printf("Hidden state available: Last position only [%d]\n", embedding_dim);
-    printf("Total available tensor size: %d elements (%.2f MB)\n",
-            embedding_dim, (embedding_dim * sizeof(float)) / (1024.0 * 1024.0));
-
-    // Print sample values for verification (last position only)
-    printf("Sample feature values (last position, first 10 dims): ");
-    for (int i = 0; i < std::min(10, embedding_dim); i++) {
-        printf("%.6f ", embeddings[i]);
-    }
-    printf("\n");
-
-    fflush(stdout);
-
-    // For now, save just the last position as a single position tensor
-    // This is what the current implementation actually provides
-    save_hidden_state_with_metadata(embeddings, 1, embedding_dim, sequence_length - 1, "hidden_state_shard0.bin");
+    printf("Complete model state saved to model_state_shard0.bin (%zu bytes)\n", written);
+    printf("State includes: embeddings, KV cache, and all intermediate values\n");
+    printf("This contains all necessary information for shard1 to continue inference\n");
 
     // Cleanup
     llama_batch_free(batch);

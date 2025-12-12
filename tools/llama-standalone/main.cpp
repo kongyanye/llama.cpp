@@ -41,7 +41,7 @@ int main(int argc, char ** argv) {
     // Use auto mode like llama-cli for consistent behavior
     // params.conversation_mode = COMMON_CONVERSATION_MODE_ENABLED;
 
-    LOG_INF("llama_shard_chain: chat completion inference\n");
+    LOG_INF("llama_complete: complete model inference\n");
     LOG_INF("Model: %s\n", params.model.path.c_str());
     LOG_INF("Prompt: %s\n", params.prompt.c_str());
     if (!params.system_prompt.empty()) {
@@ -169,6 +169,9 @@ int main(int argc, char ** argv) {
         // Sample next token using common sampler
         llama_token next_token = common_sampler_sample(smpl, ctx, -1);
 
+        // Debug: Print token info
+        printf("\n[DEBUG] Generated token ID: %d", next_token);
+
         // Check for end-of-sequence
         if (llama_vocab_is_eog(vocab, next_token)) {
             printf(" [end]\n");
@@ -177,6 +180,7 @@ int main(int argc, char ** argv) {
 
         // Convert token to text
         std::string token_text = common_token_to_piece(ctx, next_token);
+        printf(", token text: '%s'\n", token_text.c_str());
         result += token_text;
         printf("%s", token_text.c_str());
         fflush(stdout);

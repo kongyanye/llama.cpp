@@ -1,6 +1,6 @@
 include(FetchContent)
 
-set(TARGET llama-shard-receiver)
+set(TARGET llama-shard1)
 
 set(TARGET_SRCS
     main.cpp
