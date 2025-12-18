@@ -1148,12 +1148,11 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
 
     ggml_tensor * cur = nullptr;
 
-    if (ubatch.token) {
+    if (ubatch.token && tok_embd) {
         inp->tokens = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, ubatch.n_tokens);
         //cb(inp->tokens, "inp_tokens", -1);
         ggml_set_input(inp->tokens);
         res->t_tokens = inp->tokens;
-
         cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
 
         // apply lora for embedding tokens if needed
@@ -1174,10 +1173,14 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
             cur = ggml_add(ctx0, cur, inpL_delta);
         }
     } else {
+        // Either we have embeddings directly (ubatch.embd) or we have tokens but no tok_embd
+        // In both cases, create an embedding tensor
         inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_embd, ubatch.n_tokens);
         ggml_set_input(inp->embd);
 
         cur = inp->embd;
+        printf("DEBUG: Created embedding tensor: ne=[%d,%d], data=%p, buffer=%p\n",
+               (int)inp->embd->ne[0], (int)inp->embd->ne[1], inp->embd->data, inp->embd->buffer);
     }
 
     // For Granite architecture

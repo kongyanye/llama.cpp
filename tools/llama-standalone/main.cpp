@@ -120,7 +120,7 @@ int main(int argc, char ** argv) {
     LOG_INF("Prompt tokenized to %zu tokens\n", input_tokens.size());
 
     // Process prompt tokens
-    LOG_INF("Processing prompt...\n");
+    LOG_INF("Processing prompt with %ld input tokens...\n", input_tokens.size());
     llama_batch batch = llama_batch_init(input_tokens.size(), 0, 1);
     for (size_t i = 0; i < input_tokens.size(); i++) {
         batch.token[i] = input_tokens[i];
@@ -131,6 +131,9 @@ int main(int argc, char ** argv) {
     }
     batch.n_tokens = input_tokens.size();
 
+    // Generation loop
+    printf("\n=== Generating ===\n");
+    
     if (llama_decode(ctx, batch) != 0) {
         LOG_ERR("Error: failed to decode prompt\n");
         llama_batch_free(batch);
@@ -139,24 +142,51 @@ int main(int argc, char ** argv) {
     }
     llama_batch_free(batch);
 
+        // Get logits for the last token and print shape + first elements
+    const float * logits = llama_get_logits_ith(ctx, -1);
+    if (logits != NULL) {
+        // Get vocabulary size (logits tensor dimension)
+        const struct llama_vocab * vocab = llama_model_get_vocab(model);
+        int32_t n_vocab = llama_vocab_n_tokens(vocab);
+
+        printf("Logits shape: [%d] (vocabulary size)\n", n_vocab);
+        printf("Logits pointer: %p\n", (void*)logits);
+        printf("First 10 logits:\n");
+        for (int i = 0; i < 10 && i < n_vocab; i++) {
+            printf("  logits[%d] = %.6f\n", i, logits[i]);
+        }
+
+        // Find token with highest probability (max logit)
+        int max_idx = 0;
+        float max_logit = logits[0];
+        for (int i = 1; i < n_vocab; i++) {
+            if (logits[i] > max_logit) {
+                max_logit = logits[i];
+                max_idx = i;
+            }
+        }
+        printf("Max logit: %.6f at token %d\n", max_logit, max_idx);
+    } else {
+        printf("Error: Failed to get logits\n");
+    }
+
     // Initialize sampler
     common_sampler * smpl = common_sampler_init(model, params.sampling);
     if (!smpl) {
         LOG_ERR("Failed to initialize sampler\n");
         return 1;
     }
+    printf("Temperature: %.2f\n", params.sampling.temp);
 
-    // Generation loop
-    printf("\n=== Generating ===\n");
     std::string result;
     int max_tokens = params.n_predict;
-    if (max_tokens <= 0) {
-        max_tokens = 128;  // Default to 128 if not specified
-    }
+    // if (max_tokens <= 0) {
+    //     max_tokens = 128;  // Default to 128 if not specified
+    // }
 
     auto * vocab = llama_model_get_vocab(model);
 
-    int n_cur = input_tokens.size();  // Track current position in sequence
+    // int n_cur = input_tokens.size();  // Track current position in sequence
 
     for (int i = 0; i < max_tokens; i++) {
         // Get logits from the context
@@ -170,7 +200,7 @@ int main(int argc, char ** argv) {
         llama_token next_token = common_sampler_sample(smpl, ctx, -1);
 
         // Debug: Print token info
-        printf("\n[DEBUG] Generated token ID: %d", next_token);
+        // printf("\n[DEBUG] Generated token ID: %d", next_token);
 
         // Check for end-of-sequence
         if (llama_vocab_is_eog(vocab, next_token)) {
@@ -180,21 +210,21 @@ int main(int argc, char ** argv) {
 
         // Convert token to text
         std::string token_text = common_token_to_piece(ctx, next_token);
-        printf(", token text: '%s'\n", token_text.c_str());
+        // printf(", token text: '%s'\n", token_text.c_str());
         result += token_text;
         printf("%s", token_text.c_str());
         fflush(stdout);
 
-        input_tokens.push_back(next_token);
-        n_cur++;
+        // input_tokens.push_back(next_token);
+        // n_cur++;
 
         // Create batch for next token
         llama_batch batch = llama_batch_get_one(&next_token, 1);
 
-        if (llama_decode(ctx, batch) != 0) {
-            LOG_ERR("\nError: failed to decode token\n");
-            break;
-        }
+        // if (llama_decode(ctx, batch) != 0) {
+        //     LOG_ERR("\nError: failed to decode token\n");
+        //     break;
+        // }
     }
 
     printf("\n\n=== Generation completed ===\n");

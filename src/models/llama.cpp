@@ -9,19 +9,7 @@ llm_build_llama::llm_build_llama(const llama_model & model, const llm_graph_para
     ggml_tensor * cur;
     ggml_tensor * inpL;
 
-    // -------------------改-----------
-    // inpL = build_inp_embd(model.tok_embd);
-    if (model.tok_embd == nullptr) {
-        // [Receiver] Shard 1: 没有 Embedding，创建占位 Tensor
-        inpL = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, n_tokens);
-        ggml_set_name(inpL, "inp_embd"); // 标记名字
-        ggml_set_input(inpL);                    // 标记为输入
-    } else {
-        // [Sender] Shard 0: 正常构建
-        inpL = build_inp_embd(model.tok_embd);
-    }
-    cb(inpL, "inp_embd", -1);
-    // -------------------改-----------
+    inpL = build_inp_embd(model.tok_embd);
 
     // inp_pos - contains the positions
     ggml_tensor * inp_pos = build_inp_pos();
@@ -150,48 +138,18 @@ llm_build_llama::llm_build_llama(const llama_model & model, const llm_graph_para
     }
     cur = inpL;
 
-    // Only mark as hidden_state if this is actually a shard model
-    if (model.output_norm == nullptr) {
-        ggml_set_name(cur, "hidden_state");
-    }
+    cur = build_norm(cur,
+            model.output_norm, NULL,
+            LLM_NORM_RMS, -1);
 
-    
-// -------------------改-----------
-    if (model.output_norm == nullptr) {
-        // [Sender] Shard 0: 截断逻辑
-        // ggml_set_name(cur, "hidden_state");
-        
-        fprintf(stderr, "[Sender] Graph truncated. Ready for GPU transfer.\n");
-        
-        // 关键：构建图并提前返回，不再计算后面的 Head
-        // ggml_build_forward_expand(gf, cur);
-        // return; 
-    }else {
-        // [Receiver / Standard 分支]
-        // 正常构建 Output Norm 和 Head
-        // 注意：去掉多余参数，匹配你的版本定义
-        cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
-        cb(cur, "result_norm", -1);
+    cb(cur, "result_norm", -1);
+    res->t_embd = cur;
 
-        cur = build_lora_mm(model.output, cur);
-        cb(cur, "output", -1);
+    // lm_head
+    cur = build_lora_mm(model.output, cur);
 
-        // Set the logits tensor for the result - CRITICAL for proper output
-        res->t_logits = cur;
-    }
-    // cur = build_norm(cur,
-    //         model.output_norm, NULL,
-    //         LLM_NORM_RMS, -1);
-    // // -------------------
-
-    // cb(cur, "result_norm", -1);
-    // res->t_embd = cur;
-
-    // // lm_head
-    // cur = build_lora_mm(model.output, cur);
-
-    // cb(cur, "result_output", -1);
-    // res->t_logits = cur;
+    cb(cur, "result_output", -1);
+    res->t_logits = cur;
 
     ggml_build_forward_expand(gf, cur);
 }

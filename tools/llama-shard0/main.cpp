@@ -33,51 +33,12 @@ struct HiddenStateHeader {
     int last_position = 0;      // Last position index (0-based)
 };
 
-// Function to save feature map to disk (legacy format)
-void save_feature_map(const float * features, size_t size, const std::string & filename) {
-    std::ofstream outfile(filename, std::ios::binary);
-    if (!outfile.is_open()) {
-        LOG_ERR("Error: unable to open output file %s\n", filename.c_str());
-        return;
-    }
 
-    outfile.write(reinterpret_cast<const char*>(features), size * sizeof(float));
-    outfile.close();
-
-    LOG_INF("Feature map saved to %s (%zu elements, %.2f MB)\n",
-            filename.c_str(), size, (size * sizeof(float)) / (1024.0 * 1024.0));
-}
-
-// Function to save hidden state with metadata
-void save_hidden_state_with_metadata(const float * hidden_state, int seq_len, int embd_dim, int last_pos, const std::string & filename) {
-    std::ofstream outfile(filename, std::ios::binary);
-    if (!outfile.is_open()) {
-        LOG_ERR("Error: unable to open output file %s\n", filename.c_str());
-        return;
-    }
-
-    // Prepare header
-    HiddenStateHeader header;
-    header.sequence_length = seq_len;
-    header.embedding_dim = embd_dim;
-    header.last_position = last_pos;
-
-    // Write header
-    outfile.write(reinterpret_cast<const char*>(&header), sizeof(HiddenStateHeader));
-
-    // Write hidden state tensor data
-    size_t total_elements = (size_t)seq_len * embd_dim;
-    outfile.write(reinterpret_cast<const char*>(hidden_state), total_elements * sizeof(float));
-    outfile.close();
-
-    LOG_INF("Hidden state saved to %s (seq_len=%d, embd_dim=%d, total_elements=%zu, %.2f MB)\n",
-            filename.c_str(), seq_len, embd_dim, total_elements, (total_elements * sizeof(float)) / (1024.0 * 1024.0));
-}
 
 int main(int argc, char ** argv) {
     // Set log level to info
     llama_log_set([](ggml_log_level level, const char * text, void * /* user_data */) {
-        if (level >= GGML_LOG_LEVEL_INFO) {
+        if (level >= GGML_LOG_LEVEL_ERROR) {
             fprintf(stderr, "%s", text);
         }
     }, nullptr);
@@ -170,16 +131,6 @@ int main(int argc, char ** argv) {
     std::vector<llama_token> input_tokens = common_tokenize(ctx, formatted_prompt, true, true);
     LOG_INF("Prompt tokenized to %zu tokens\n", input_tokens.size());
 
-    // Debug: Print first few tokens for verification
-    LOG_INF("First 10 tokens: [");
-    for (size_t i = 0; i < std::min((size_t)10, input_tokens.size()); i++) {
-        LOG_INF("%d", input_tokens[i]);
-        if (i < std::min((size_t)10, input_tokens.size()) - 1) {
-            LOG_INF(", ");
-        }
-    }
-    LOG_INF("]\n");
-
     // Process prompt tokens
     LOG_INF("Processing prompt...\n");
     llama_batch batch = llama_batch_init(input_tokens.size(), 0, 1);
@@ -188,18 +139,11 @@ int main(int argc, char ** argv) {
         batch.pos[i] = i;
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = 0;
-        batch.logits[i] = (i == input_tokens.size() - 1) ? 1 : 0;  // Request logits for last token
+        batch.logits[i] = 1;  // Request logits for ALL tokens to preserve hidden states
     }
     batch.n_tokens = input_tokens.size();
 
-    // For partial models, we need to handle decoding differently
-    printf("\n=== Processing Partial Model ===\n");
-    printf("Note: Loading first shard only - extracting intermediate features\n");
-    printf("Available layers: %d (partial model)\n", total_layers);
-
-    // Try to decode, but handle partial model gracefully
     int decode_result = llama_decode(ctx, batch);
-    const float * embeddings = nullptr;
 
     if (decode_result != 0) {
         LOG_ERR("Error: failed to decode with partial model\n");
@@ -207,20 +151,28 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // Save complete model state instead of just hidden state
-    printf("Saving complete model state including KV cache...\n");
+    // Extract hidden state after the last layer (layer 7)
+    printf("Extracting hidden state after layer 7...\n");
+    const float * hidden_state = llama_get_hidden_state(ctx);
+    if (!hidden_state) {
+        LOG_ERR("Error: unable to get hidden state\n");
+        llama_batch_free(batch);
+        return 1;
+    }
+    printf("First 10 elements of hidden_state:\n");
+    for (int i = 0; i < 10; i++) {                                                                                                                                          
+        printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
+    }                                                                                                                                                                       
+    printf("\n");
 
-    size_t state_size = llama_state_get_size(ctx);
-    std::vector<uint8_t> state_data(state_size);
-    size_t written = llama_state_get_data(ctx, state_data.data(), state_size);
+    // Save hidden state for Shard1 (format: [embd_dim, seq_len])
+    std::ofstream hidden_file("hidden_state_shard0.bin", std::ios::binary);
+    hidden_file.write(reinterpret_cast<const char*>(hidden_state),
+                      input_tokens.size() * embedding_dim * sizeof(float));
+    hidden_file.close();
 
-    std::ofstream state_file("model_state_shard0.bin", std::ios::binary);
-    state_file.write(reinterpret_cast<const char*>(state_data.data()), written);
-    state_file.close();
-
-    printf("Complete model state saved to model_state_shard0.bin (%zu bytes)\n", written);
-    printf("State includes: embeddings, KV cache, and all intermediate values\n");
-    printf("This contains all necessary information for shard1 to continue inference\n");
+    printf("Hidden state saved to hidden_state_shard0.bin (%zu tokens, %d dims)\n",
+           input_tokens.size(), embedding_dim);
 
     // Cleanup
     llama_batch_free(batch);

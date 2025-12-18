@@ -292,7 +292,7 @@ private:
     llm_graph_result_ptr gf_res_reserve;
 
     // Hidden state tensor for sharded models (set during graph_compute)
-    ggml_tensor * hidden_state_tensor;
+    mutable ggml_tensor * hidden_state_tensor;
 
     // host buffer for the model output (logits and embeddings)
     ggml_backend_buffer_ptr buf_output;

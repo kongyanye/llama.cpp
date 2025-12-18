@@ -12,9 +12,6 @@
 #include <limits>
 #include <stdexcept>
 
-#include <cstdio> // 为了使用 FILE, fopen, fread, fwrite
-#include <thread> // 为了使用 std::this_thread::sleep_for
-#include <chrono> // 为了使用 std::chrono
 //
 // llama_context
 //
@@ -999,7 +996,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
     const auto & hparams = model.hparams;
 
     const int64_t n_vocab = vocab.n_tokens();
-    const int64_t n_embd  = hparams.n_embd_inp();
+    const int64_t n_embd  = hparams.n_embd_inp(); // 2048
 
     // when computing embeddings, all tokens are output
     const bool output_all = cparams.embeddings;
@@ -1094,11 +1091,13 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
     do {
         const auto & ubatch = mctx->get_ubatch();
+        // printf("ubatch, n_pos: %d, n_tokens: %d\n", ubatch.n_pos, ubatch.n_tokens);
 
         // count the outputs in this ubatch
         {
             int32_t n_outputs_new = 0;
 
+            // printf("n_outputs_all: %d, n_tokens_all: %d\n", n_outputs_all, n_tokens_all);
             if (n_outputs_all == n_tokens_all) {
                 n_outputs_new = ubatch.n_tokens;
             } else {
@@ -1486,26 +1485,11 @@ ggml_status llama_context::graph_compute(
     }
 
     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
-
-    // 2. [新增] Sender 安全出口
-    // 检查图中是否存在 "hidden_state" 节点，如果存在，说明是中间分片，不需要提取 Logits
-    struct ggml_tensor * hidden = ggml_graph_get_tensor(gf, "hidden_state");
-    if (hidden != nullptr) {
-        // 存储hidden_state tensor指针以供后续访问
-        hidden_state_tensor = hidden;
-        // 此时数据已在 rpc_out->data (CPU) 或显存 (GPU) 中
-        // Rust 将通过指针读取此数据
-        // 直接返回成功状态，跳过后续的 Logits 处理逻辑
-        return status;
-    } else {
-        // 清除hidden_state tensor指针
-        hidden_state_tensor = nullptr;
+    if (status != GGML_STATUS_SUCCESS) {
+        LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
     }
-    // if (status != GGML_STATUS_SUCCESS) {
-    //     LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
-    // }
 
-    // // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));
+    // fprintf(stderr, "splits: %d\n", ggml_backend_sched_get_n_splits(sched));
 
     return status;
 }
@@ -1539,6 +1523,16 @@ llm_graph_cb llama_context::graph_get_cb() const {
                     }
                 }
             }
+        }
+
+        // // Handle hidden state tensor for sharded models
+        // if (il == 0 && strcmp(name, "l_out") == 0) {
+        //     printf("current name is %d %s\n", il, name);
+        // }
+        
+        if (strcmp(name, "hidden_state") == 0) {
+            // Save the tensor for later retrieval via llama_get_hidden_state()
+            hidden_state_tensor = cur;
         }
     };
 }
@@ -2532,9 +2526,22 @@ float * llama_context::get_hidden_state_data() const {
         temp_buffer.resize(tensor_size / sizeof(float));
         ggml_backend_tensor_get(hidden_state_tensor, temp_buffer.data(), 0, tensor_size);
         data = temp_buffer.data();
+        printf("DEBUG: Hidden state tensor - GPU buffer, size: %zu bytes, elements: %zu\n",
+               tensor_size, tensor_size / sizeof(float));
     } else {
         // Tensor is in CPU memory
         data = (float*)hidden_state_tensor->data;
+        size_t tensor_size = ggml_nbytes(hidden_state_tensor);
+        printf("DEBUG: Hidden state tensor - CPU memory, size: %zu bytes, elements: %zu\n",
+               tensor_size, tensor_size / sizeof(float));
+    }
+
+    // Print tensor dimensions
+    if (hidden_state_tensor) {
+        printf("DEBUG: Hidden state tensor dimensions: [%ld, %ld, %ld, %ld]\n",
+               hidden_state_tensor->ne[0], hidden_state_tensor->ne[1],
+               hidden_state_tensor->ne[2], hidden_state_tensor->ne[3]);
+        printf("DEBUG: Total elements: %ld\n", ggml_nelements(hidden_state_tensor));
     }
 
     return data;

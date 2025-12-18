@@ -26,133 +26,29 @@ static void print_usage(int, char ** argv) {
     printf("\n");
 }
 
-// Header structure for hidden state files (must match Shard 0)
-struct HiddenStateHeader {
-    int magic = 0xDEADBEEF;     // Magic number for validation
-    int version = 1;            // Format version
-    int sequence_length = 0;    // Number of tokens in sequence
-    int embedding_dim = 0;      // Hidden dimension
-    int last_position = 0;      // Last position index (0-based)
-};
-
-// Forward declarations
-std::vector<float> load_feature_map(const std::string & filename, size_t expected_size);
-std::vector<float> load_hidden_state_with_metadata(const std::string & filename, HiddenStateHeader & header);
-
-// Function to load feature map from disk (legacy format)
-std::vector<float> load_feature_map(const std::string & filename, size_t expected_size) {
-    std::ifstream infile(filename, std::ios::binary);
-    if (!infile.is_open()) {
-        LOG_ERR("Error: unable to open input file %s\n", filename.c_str());
-        return {};
-    }
-
-    // Get file size
-    infile.seekg(0, std::ios::end);
-    size_t file_size = infile.tellg();
-    infile.seekg(0, std::ios::beg);
-
-    size_t num_elements = file_size / sizeof(float);
-    if (num_elements != expected_size) {
-        LOG_ERR("Error: file size mismatch. Expected %zu elements, got %zu\n", expected_size, num_elements);
-        return {};
-    }
-
-    std::vector<float> features(num_elements);
-    infile.read(reinterpret_cast<char*>(features.data()), file_size);
-    infile.close();
-
-    LOG_INF("Feature map loaded from %s (%zu elements, %.2f MB)\n",
-            filename.c_str(), num_elements, (file_size) / (1024.0 * 1024.0));
-
-    return features;
-}
-
-// Function to load hidden state with metadata from disk
-std::vector<float> load_hidden_state_with_metadata(const std::string & filename, HiddenStateHeader & header) {
-    std::ifstream infile(filename, std::ios::binary);
-    if (!infile.is_open()) {
-        LOG_ERR("Error: unable to open input file %s\n", filename.c_str());
-        return {};
-    }
-
-    // Read and validate header
-    infile.read(reinterpret_cast<char*>(&header), sizeof(HiddenStateHeader));
-    if (infile.gcount() != sizeof(HiddenStateHeader)) {
-        LOG_ERR("Error: unable to read header from %s\n", filename.c_str());
-        return {};
-    }
-
-    // Validate magic number
-    if (header.magic != 0xDEADBEEF) {
-        LOG_ERR("Error: invalid file format. Magic number mismatch.\n");
-        return {};
-    }
-
-    // Validate version
-    if (header.version != 1) {
-        LOG_ERR("Error: unsupported file version %d\n", header.version);
-        return {};
-    }
-
-    // Calculate data size
-    size_t total_elements = (size_t)header.sequence_length * header.embedding_dim;
-    size_t data_size = total_elements * sizeof(float);
-
-    // Read hidden state tensor data
-    std::vector<float> hidden_state(total_elements);
-    infile.read(reinterpret_cast<char*>(hidden_state.data()), data_size);
-    if (infile.gcount() != data_size) {
-        LOG_ERR("Error: unable to read complete tensor data from %s\n", filename.c_str());
-        return {};
-    }
-
-    infile.close();
-
-    LOG_INF("Hidden state loaded from %s (seq_len=%d, embd_dim=%d, total_elements=%zu, %.2f MB)\n",
-            filename.c_str(), header.sequence_length, header.embedding_dim, total_elements, data_size / (1024.0 * 1024.0));
-
-    return hidden_state;
-}
 
 int main(int argc, char ** argv) {
     // Set log level to info
     llama_log_set([](ggml_log_level level, const char * text, void * /* user_data */) {
-        if (level >= GGML_LOG_LEVEL_INFO) {
+        if (level >= GGML_LOG_LEVEL_ERROR) {
             fprintf(stderr, "%s", text);
         }
     }, nullptr);
 
     common_params params;
 
+    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_MAIN, print_usage)) {
+        return 1;
+    }
+
     // Set default parameters for receiver shard
     params.n_predict = 1;  // Only generate one token per call
     params.sampling.temp = 0.0f;  // Match standalone default temperature
+    params.warmup = false;
+    params.n_gpu_layers = 0;
 
     // Extract custom parameters before common_params_parse
-    std::string hidden_state_file = "model_state_shard0.bin";  // default
-
-    // Create a new argv without our custom parameter
-    std::vector<char*> new_argv;
-    new_argv.push_back(argv[0]);
-
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0) {
-            if (i + 1 < argc) {
-                hidden_state_file = argv[i + 1];
-                i++; // Skip the next argument
-            }
-        } else {
-            new_argv.push_back(argv[i]);
-        }
-    }
-
-    int new_argc = new_argv.size();
-    char** new_argv_data = new_argv.data();
-
-    if (!common_params_parse(new_argc, new_argv_data, params, LLAMA_EXAMPLE_MAIN, print_usage)) {
-        return 1;
-    }
+    std::string hidden_state_file = "/home/sig/files/ModelFlow/llama.cpp/build/hidden_state_shard0.bin";  // default
 
     LOG_INF("llama_shard_receiver: receiving shard with hidden state injection\n");
     LOG_INF("Model: %s\n", params.model.path.c_str());
@@ -193,31 +89,102 @@ int main(int argc, char ** argv) {
     printf("Receiver layers: %d, Embedding dimension: %d\n", total_layers, embedding_dim);
     fflush(stdout);
 
-    printf("DEBUG: About to load complete model state...\n");
-    // Load complete model state
-    printf("Loading complete model state from shard0...\n");
-    std::ifstream state_file("model_state_shard0.bin", std::ios::binary);
-    if (!state_file.is_open()) {
-        LOG_ERR("Error: unable to open state file model_state_shard0.bin\n");
-        LOG_ERR("Make sure shard0 was run first to generate the state file\n");
+    // Load hidden state from Shard0
+    printf("Loading hidden state from Shard0...\n");
+    std::ifstream hidden_file(hidden_state_file, std::ios::binary);
+    if (!hidden_file.is_open()) {
+        LOG_ERR("Error: unable to open hidden_state_shard0.bin\n");
+        LOG_ERR("Make sure shard0 was run first to generate the hidden state file\n");
         return 1;
     }
 
-    state_file.seekg(0, std::ios::end);
-    size_t state_size = state_file.tellg();
-    state_file.seekg(0, std::ios::beg);
+    // Calculate sequence length from hidden state file size
+    // The file contains seq_len * embedding_dim float values
+    hidden_file.seekg(0, std::ios::end);
+    size_t file_size = hidden_file.tellg();
+    hidden_file.seekg(0, std::ios::beg);
 
-    std::vector<uint8_t> state_data(state_size);
-    state_file.read(reinterpret_cast<char*>(state_data.data()), state_size);
-    state_file.close();
+    // Calculate sequence length: total_floats / embedding_dim
+    int seq_len = static_cast<int>(file_size / (sizeof(float) * embedding_dim));
 
-    // Restore state in the model context
-    printf("Restoring state in shard1 model context...\n");
-    size_t read = llama_state_set_data(ctx, state_data.data(), state_size);
-    printf("Model state restored (%zu bytes)\n", read);
+    printf("Hidden state file: %zu bytes, embedding_dim: %d, calculated seq_len: %d\n",
+           file_size, embedding_dim, seq_len);
 
-    // Create a minimal batch for sampling
-    printf("Creating batch for token generation from restored state...\n");
+    std::vector<float> hidden_state(file_size / sizeof(float));
+    hidden_file.read(reinterpret_cast<char*>(hidden_state.data()), file_size);
+    hidden_file.close();
+
+    printf("Hidden state loaded: %zu floats (%.2f KB)\n",
+           hidden_state.size(), (file_size) / (1024.0));
+
+    printf("First 10 elements of hidden_state:\n");
+    for (int i = 0; i < 10; i++) {                                                                                                                                          
+        printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
+    }                                                                                                                                                                       
+    printf("\n");
+
+    // Create batch for embedding input
+    printf("Creating batch with all hidden state embeddings...\n");
+    llama_batch batch = llama_batch_init(seq_len, embedding_dim, 1);
+    batch.n_tokens = seq_len;
+    batch.token = nullptr;  // CRITICAL: Must be NULL when using embeddings!
+
+    // Copy embeddings properly - shard0 saves in [embd_dim, seq_len] format which is exactly what GGML expects
+    // No transpose needed - just copy directly
+    printf("DEBUG: Copying embeddings directly - shard0 already saves in [%d][%d] format\n", embedding_dim, seq_len);
+    memcpy(batch.embd, hidden_state.data(), file_size);
+
+    // Set positions and sequence info
+    for (int i = 0; i < seq_len; i++) {
+        batch.pos[i] = i;
+        batch.n_seq_id[i] = 1;
+        batch.seq_id[i][0] = 0;
+        batch.logits[i] = (i == seq_len - 1) ? 1 : 0;  // Only request logits for last token
+    }
+
+    // Debug: Verify embedding data
+    printf("DEBUG: First 5 embedding values: %.6f, %.6f, %.6f, %.6f, %.6f\n",
+           batch.embd[0], batch.embd[1], batch.embd[2], batch.embd[3], batch.embd[4]);
+    printf("DEBUG: batch.token = %p\n", (void*)batch.token);
+    printf("DEBUG: batch.embd = %p\n", (void*)batch.embd);
+
+    // Run forward pass through Shard1 layers (original 8-15)
+    printf("Running forward pass through Shard1 layers...\n");
+    int decode_result = llama_decode(ctx, batch);
+    if (decode_result != 0) {
+        LOG_ERR("Error: failed to decode\n");
+        llama_batch_free(batch);
+        return 1;
+    }
+    printf("Forward pass completed - ready for sampling\n");
+
+    // Get logits for the last token and print shape + first elements
+    const float * logits = llama_get_logits_ith(ctx, -1);
+    if (logits != NULL) {
+        // Get vocabulary size (logits tensor dimension)
+        const struct llama_vocab * vocab = llama_model_get_vocab(model);
+        int32_t n_vocab = llama_vocab_n_tokens(vocab);
+
+        printf("Logits shape: [%d] (vocabulary size)\n", n_vocab);
+        printf("Logits pointer: %p\n", (void*)logits);
+        printf("First 10 logits:\n");
+        for (int i = 0; i < 10 && i < n_vocab; i++) {
+            printf("  logits[%d] = %.6f\n", i, logits[i]);
+        }
+
+        // Find token with highest probability (max logit)
+        int max_idx = 0;
+        float max_logit = logits[0];
+        for (int i = 1; i < n_vocab; i++) {
+            if (logits[i] > max_logit) {
+                max_logit = logits[i];
+                max_idx = i;
+            }
+        }
+        printf("Max logit: %.6f at token %d\n", max_logit, max_idx);
+    } else {
+        printf("Error: Failed to get logits\n");
+    }
 
     // Initialize sampler
     struct common_sampler * smpl = common_sampler_init(model, params.sampling);
@@ -226,8 +193,6 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    printf("Forward pass completed successfully!\n");
-    printf("Generating next token from loaded state...\n");
     printf("Temperature: %.2f\n", params.sampling.temp);
 
     // Generate exactly ONE token from the loaded state
@@ -243,18 +208,13 @@ int main(int argc, char ** argv) {
     if (new_token == llama_vocab_eos(vocab)) {
         printf(" [EOS token - end of sequence]\n");
     } else {
-        // Convert token to string
-        char token_str[256];
-        int n = llama_token_to_piece(vocab, new_token, token_str, sizeof(token_str), 0, true);
-        if (n > 0) {
-            printf(", token text: '%.*s'\n", n, token_str);
-        }
-
-        // Accept the token in sampler
-        common_sampler_accept(smpl, new_token, true);
+        // Convert token to string using common API for consistency
+        std::string token_text = common_token_to_piece(ctx, new_token);
+        printf(", token text: '%s'\n", token_text.c_str());
     }
 
     common_sampler_free(smpl);
+    llama_batch_free(batch);
 
     printf("\n=== Shard 1 Processing Complete ===\n");
     printf("Successfully generated token from complete model state transfer\n");
