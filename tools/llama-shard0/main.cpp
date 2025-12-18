@@ -151,28 +151,45 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // Extract hidden state after the last layer (layer 7)
-    printf("Extracting hidden state after layer 7...\n");
-    const float * hidden_state = llama_get_hidden_state(ctx);
-    if (!hidden_state) {
-        LOG_ERR("Error: unable to get hidden state\n");
-        llama_batch_free(batch);
-        return 1;
+    for (int tok_idx = 0; tok_idx < 2; tok_idx++) {
+        // Extract hidden state after the last layer (layer 7)
+        printf("Extracting hidden state after layer 7...\n");
+        const float * hidden_state = llama_get_hidden_state(ctx);
+        if (!hidden_state) {
+            LOG_ERR("Error: unable to get hidden state\n");
+            llama_batch_free(batch);
+            return 1;
+        }
+        printf("First 10 elements of hidden_state:\n");
+        for (int i = 0; i < 10; i++) {                                                                                                                                          
+            printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
+        }                                                                                                                                                                       
+        printf("\n");
+
+        int tok_len;
+        if (tok_idx == 0) {
+            tok_len = input_tokens.size();
+        } else {
+            tok_len = 1;
+        }
+        // Save hidden state for Shard1 (format: [embd_dim, seq_len])
+        std::string hidden_file_name = "hidden_state_shard" + std::to_string(tok_idx) + ".bin";
+        std::ofstream hidden_file(hidden_file_name, std::ios::binary);
+        hidden_file.write(reinterpret_cast<const char*>(hidden_state),
+                        tok_len * embedding_dim * sizeof(float));
+        hidden_file.close();
+
+        printf("Hidden state saved to %s (%u tokens, %d dims)\n",
+            hidden_file_name.c_str(), tok_len, embedding_dim);
+
+        llama_token next_token(9906);
+        llama_batch batch = llama_batch_get_one(&next_token, 1);
+
+        if (llama_decode(ctx, batch) != 0) {
+            LOG_ERR("\nError: failed to decode token\n");
+            break;
+        }
     }
-    printf("First 10 elements of hidden_state:\n");
-    for (int i = 0; i < 10; i++) {                                                                                                                                          
-        printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
-    }                                                                                                                                                                       
-    printf("\n");
-
-    // Save hidden state for Shard1 (format: [embd_dim, seq_len])
-    std::ofstream hidden_file("hidden_state_shard0.bin", std::ios::binary);
-    hidden_file.write(reinterpret_cast<const char*>(hidden_state),
-                      input_tokens.size() * embedding_dim * sizeof(float));
-    hidden_file.close();
-
-    printf("Hidden state saved to hidden_state_shard0.bin (%zu tokens, %d dims)\n",
-           input_tokens.size(), embedding_dim);
 
     // Cleanup
     llama_batch_free(batch);

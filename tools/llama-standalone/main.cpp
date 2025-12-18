@@ -221,10 +221,10 @@ int main(int argc, char ** argv) {
         // Create batch for next token
         llama_batch batch = llama_batch_get_one(&next_token, 1);
 
-        // if (llama_decode(ctx, batch) != 0) {
-        //     LOG_ERR("\nError: failed to decode token\n");
-        //     break;
-        // }
+        if (llama_decode(ctx, batch) != 0) {
+            LOG_ERR("\nError: failed to decode token\n");
+            break;
+        }
     }
 
     printf("\n\n=== Generation completed ===\n");
