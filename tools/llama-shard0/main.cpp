@@ -57,7 +57,6 @@ int main(int argc, char ** argv) {
     LOG_INF("llama_single_shard_infer: single shard inference with feature extraction\n");
     LOG_INF("Model: %s\n", params.model.path.c_str());
     LOG_INF("Prompt: %s\n", params.prompt.c_str());
-    LOG_INF("Output file: feature_map.bin\n");
 
     // Initialize backend
     llama_backend_init();
@@ -132,7 +131,6 @@ int main(int argc, char ** argv) {
     LOG_INF("Prompt tokenized to %zu tokens\n", input_tokens.size());
 
     // Process prompt tokens
-    LOG_INF("Processing prompt...\n");
     llama_batch batch = llama_batch_init(input_tokens.size(), 0, 1);
     for (size_t i = 0; i < input_tokens.size(); i++) {
         batch.token[i] = input_tokens[i];
@@ -156,15 +154,15 @@ int main(int argc, char ** argv) {
         printf("Extracting hidden state after layer 7...\n");
         const float * hidden_state = llama_get_hidden_state(ctx);
         if (!hidden_state) {
-            LOG_ERR("Error: unable to get hidden state\n");
+            // LOG_ERR("Error: unable to get hidden state\n");
             llama_batch_free(batch);
             return 1;
         }
-        printf("First 10 elements of hidden_state:\n");
-        for (int i = 0; i < 10; i++) {                                                                                                                                          
-            printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
-        }                                                                                                                                                                       
-        printf("\n");
+        // printf("First 10 elements of hidden_state:\n");
+        // for (int i = 0; i < 10; i++) {                                                                                                                                          
+        //     printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
+        // }                                                                                                                                                                       
+        // printf("\n");
 
         int tok_len;
         if (tok_idx == 0) {

@@ -96,8 +96,9 @@ int main(int argc, char ** argv) {
 
     llama_batch batch;
 
-    printf("Temperature: %.2f\n", params.sampling.temp);
+    // printf("Temperature: %.2f\n", params.sampling.temp);
 
+    int tok_len = -1;
     for (int tok_idx = 0; tok_idx < 2; tok_idx++) {
         std::string hidden_state_file = "/home/sig/files/ModelFlow/llama.cpp/build/hidden_state_shard" + std::to_string(tok_idx) + ".bin";
 
@@ -118,7 +119,7 @@ int main(int argc, char ** argv) {
 
         // Calculate sequence length: total_floats / embedding_dim
         int seq_len = static_cast<int>(file_size / (sizeof(float) * embedding_dim));
-        int tok_len;
+        
         if (tok_idx == 0) {
             tok_len = seq_len - 1;
         } else {
@@ -132,23 +133,23 @@ int main(int argc, char ** argv) {
         hidden_file.read(reinterpret_cast<char*>(hidden_state.data()), file_size);
         hidden_file.close();
 
-        printf("Hidden state loaded: %zu floats (%.2f KB)\n",
-            hidden_state.size(), (file_size) / (1024.0));
+        // printf("Hidden state loaded: %zu floats (%.2f KB)\n",
+        //     hidden_state.size(), (file_size) / (1024.0));
 
-        printf("First 10 elements of hidden_state:\n");
-        for (int i = 0; i < 10; i++) {                                                                                                                                          
-            printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
-        }                                                                                                                                                                       
-        printf("\n");
+        // printf("First 10 elements of hidden_state:\n");
+        // for (int i = 0; i < 10; i++) {                                                                                                                                          
+        //     printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
+        // }                                                                                                                                                                       
+        // printf("\n");
 
         // Create batch for embedding input
-        printf("Creating batch with all hidden state embeddings...\n");
+        // printf("Creating batch with all hidden state embeddings...\n");
 
         if (tok_idx == 0) {
             batch = llama_batch_init(seq_len, embedding_dim, 1);
             batch.n_tokens = seq_len;
             batch.token = nullptr;  // CRITICAL: Must be NULL when using embeddings!
-            printf("DEBUG: Copying embeddings directly - shard0 already saves in [%d][%d] format\n", embedding_dim, seq_len);
+            // printf("DEBUG: Copying embeddings directly - shard0 already saves in [%d][%d] format\n", embedding_dim, seq_len);
             memcpy(batch.embd, hidden_state.data(), file_size);
         } else {
             batch = llama_batch_init(1, embedding_dim, 1);
@@ -174,21 +175,21 @@ int main(int argc, char ** argv) {
             batch.logits[0] = 1;  // Request logits for this token
         }
 
-        // Debug: Verify embedding data
-        printf("DEBUG: First 5 embedding values: %.6f, %.6f, %.6f, %.6f, %.6f\n",
-            batch.embd[0], batch.embd[1], batch.embd[2], batch.embd[3], batch.embd[4]);
-        printf("DEBUG: batch.token = %p\n", (void*)batch.token);
-        printf("DEBUG: batch.embd = %p\n", (void*)batch.embd);
+        // // Debug: Verify embedding data
+        // printf("DEBUG: First 5 embedding values: %.6f, %.6f, %.6f, %.6f, %.6f\n",
+        //     batch.embd[0], batch.embd[1], batch.embd[2], batch.embd[3], batch.embd[4]);
+        // printf("DEBUG: batch.token = %p\n", (void*)batch.token);
+        // printf("DEBUG: batch.embd = %p\n", (void*)batch.embd);
 
         // Run forward pass through Shard1 layers (original 8-15)
-        printf("Running forward pass through Shard1 layers...\n");
+        // printf("Running forward pass through Shard1 layers...\n");
         int decode_result = llama_decode(ctx, batch);
         if (decode_result != 0) {
             LOG_ERR("Error: failed to decode\n");
             llama_batch_free(batch);
             return 1;
         }
-        printf("Forward pass completed - ready for sampling\n");
+        // printf("Forward pass completed - ready for sampling\n");
 
         // Get logits for the last token and print shape + first elements
         const float * logits = llama_get_logits_ith(ctx, -1);
@@ -197,7 +198,7 @@ int main(int argc, char ** argv) {
             const struct llama_vocab * vocab = llama_model_get_vocab(model);
             int32_t n_vocab = llama_vocab_n_tokens(vocab);
 
-            printf("Logits shape: [%d] (vocabulary size)\n", n_vocab);
+            // printf("Logits shape: [%d] (vocabulary size)\n", n_vocab);
             // printf("Logits pointer: %p\n", (void*)logits);
             // printf("First 10 logits:\n");
             // for (int i = 0; i < 10 && i < n_vocab; i++) {
@@ -242,12 +243,11 @@ int main(int argc, char ** argv) {
     llama_batch_free(batch);
 
     printf("\n=== Shard 1 Processing Complete ===\n");
-    printf("Successfully generated token from complete model state transfer\n");
-    printf("This demonstrates correct state transfer between model shards\n");
+    // printf("Successfully generated token from complete model state transfer\n");
+    // printf("This demonstrates correct state transfer between model shards\n");
 
     // Cleanup
     llama_backend_free();
 
-    LOG_INF("Receiver shard processing completed\n");
     return 0;
 }
