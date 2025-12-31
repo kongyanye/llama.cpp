@@ -169,6 +169,7 @@ llm_build_llama_shard::llm_build_llama_shard(const llama_model & model, const ll
         // This is an intermediate shard - no output components
         // The final tensor will be used for hidden state extraction
         cb(cur, "hidden_state", -1);
+        res->t_hidden_state = cur;  // Store in res for retrieval after execution
     }
 
     // Build the computation graph

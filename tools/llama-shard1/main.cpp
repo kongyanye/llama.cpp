@@ -99,7 +99,7 @@ int main(int argc, char ** argv) {
     // printf("Temperature: %.2f\n", params.sampling.temp);
 
     int tok_len = -1;
-    for (int tok_idx = 0; tok_idx < 2; tok_idx++) {
+    for (int tok_idx = 0; tok_idx < 3; tok_idx++) {
         std::string hidden_state_file = "/home/sig/files/ModelFlow/llama.cpp/build/hidden_state_shard" + std::to_string(tok_idx) + ".bin";
 
         // Load hidden state from Shard0

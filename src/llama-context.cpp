@@ -812,6 +812,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         return nullptr;
     }
 
+    // Update hidden_state_tensor from the current graph result for retrieval
+    hidden_state_tensor = res->get_hidden_state();
+
     ret = GGML_STATUS_SUCCESS;
 
     return res;
@@ -1529,11 +1532,6 @@ llm_graph_cb llama_context::graph_get_cb() const {
         // if (il == 0 && strcmp(name, "l_out") == 0) {
         //     printf("current name is %d %s\n", il, name);
         // }
-        
-        if (strcmp(name, "hidden_state") == 0) {
-            // Save the tensor for later retrieval via llama_get_hidden_state()
-            hidden_state_tensor = cur;
-        }
     };
 }
 

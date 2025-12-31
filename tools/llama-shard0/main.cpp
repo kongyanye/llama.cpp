@@ -53,6 +53,7 @@ int main(int argc, char ** argv) {
     if (params.n_predict == -1) params.n_predict = 1;  // Only need one forward pass
     if (params.n_ctx == 4096) params.n_ctx = 2048;
     if (params.n_batch == 2048) params.n_batch = 512;
+    params.warmup = false;
 
     LOG_INF("llama_single_shard_infer: single shard inference with feature extraction\n");
     LOG_INF("Model: %s\n", params.model.path.c_str());
@@ -149,15 +150,17 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    for (int tok_idx = 0; tok_idx < 2; tok_idx++) {
+    for (int tok_idx = 0; tok_idx < 3; tok_idx++) {
         // Extract hidden state after the last layer (layer 7)
         printf("Extracting hidden state after layer 7...\n");
         const float * hidden_state = llama_get_hidden_state(ctx);
         if (!hidden_state) {
             // LOG_ERR("Error: unable to get hidden state\n");
+            printf("fail to get hidden state for tok_idx %d\n", tok_idx);
             llama_batch_free(batch);
             return 1;
         }
+        printf("tok_idx %d\n", tok_idx);
         // printf("First 10 elements of hidden_state:\n");
         // for (int i = 0; i < 10; i++) {                                                                                                                                          
         //     printf("  hidden_state[%d] = %.6f\n", i, hidden_state[i]);                                                                                                          
@@ -180,8 +183,16 @@ int main(int argc, char ** argv) {
         printf("Hidden state saved to %s (%u tokens, %d dims)\n",
             hidden_file_name.c_str(), tok_len, embedding_dim);
 
-        llama_token next_token(9906);
-        llama_batch batch = llama_batch_get_one(&next_token, 1);
+        llama_batch batch;
+        if (tok_idx == 0) {
+            llama_token next_token(9906);
+            batch = llama_batch_get_one(&next_token, 1);
+        } else if (tok_idx == 1) {
+            llama_token next_token(0);
+            batch = llama_batch_get_one(&next_token, 1);
+        } else {
+            break;
+        }
 
         if (llama_decode(ctx, batch) != 0) {
             LOG_ERR("\nError: failed to decode token\n");
