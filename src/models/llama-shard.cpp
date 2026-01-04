@@ -10,12 +10,13 @@ llm_build_llama_shard::llm_build_llama_shard(const llama_model & model, const ll
     ggml_tensor * cur;
     ggml_tensor * inpL;
 
+    bool is_first_shard = model.tok_embd != NULL && model.output_norm == NULL;
     bool is_final_shard = model.output_norm != NULL;
-    printf("is_final_shard: %d\n", is_final_shard);
+    printf("is_first_shard: %d, is_final_shard: %d\n", is_first_shard, is_final_shard);
     printf("building llama-shard graph with %d layers\n", n_layer);
 
     printf("model.tok_embd: %p\n", model.tok_embd);
-    if (!is_final_shard) {
+    if (is_first_shard) {
         inpL = build_inp_embd(model.tok_embd);
     } else {
         inpL = build_inp_embd(NULL);
